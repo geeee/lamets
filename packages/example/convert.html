@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lamets - WAV to MP3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #111; color: #eee; }
+  .container { text-align: center; max-width: 400px; width: 100%; padding: 1rem; }
+  h1 { font-size: 1.2rem; margin-bottom: 1.5rem; font-weight: 400; color: #888; }
+  .dropzone { border: 2px dashed #444; border-radius: 12px; padding: 3rem 1.5rem; cursor: pointer; transition: all 0.2s; }
+  .dropzone:hover, .dropzone.dragover { border-color: #888; background: #1a1a1a; }
+  .dropzone p { color: #666; font-size: 0.9rem; }
+  .dropzone .hint { font-size: 0.75rem; margin-top: 0.5rem; color: #444; }
+  input[type=file] { display: none; }
+  #result { margin-top: 1.5rem; display: none; }
+  #result.visible { display: block; }
+  #status { margin-top: 1rem; font-size: 0.85rem; color: #666; min-height: 1.2em; }
+  .controls { margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: center; }
+  .controls button { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; cursor: pointer; font-size: 0.85rem; }
+  .controls button:hover { background: #333; border-color: #666; }
+  audio { margin-top: 1rem; width: 100%; }
+  .progress { margin-top: 1rem; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+  .progress-bar { height: 100%; width: 0; background: #7af; transition: width 0.1s; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>lamets WAV to MP3</h1>
+  <div class="dropzone" id="dropzone">
+    <p>Drop a WAV file here or click to select</p>
+    <p class="hint">.wav, 16-bit PCM</p>
+    <input type="file" id="fileInput" accept=".wav,audio/wav">
+  </div>
+  <div id="status"></div>
+  <div class="progress" id="progress" style="display:none"><div class="progress-bar" id="progressBar"></div></div>
+  <div id="result">
+    <audio id="player" controls style="width:100%"></audio>
+    <div class="controls">
+      <button id="downloadBtn">Download MP3</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { Mp3Encoder, WavHeader } from 'lamets';
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const status = document.getElementById('status');
+const progress = document.getElementById('progress');
+const progressBar = document.getElementById('progressBar');
+const result = document.getElementById('result');
+const player = document.getElementById('player');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let mp3Blob = null;
+let fileName = 'output.mp3';
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+downloadBtn.addEventListener('click', () => {
+  if (!mp3Blob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(mp3Blob);
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+async function handleFile(file) {
+  result.classList.remove('visible');
+  status.textContent = 'Reading file...';
+
+  const arrayBuffer = await file.arrayBuffer();
+  const dv = new DataView(arrayBuffer);
+
+  let header;
+  try {
+    header = WavHeader.readHeader(dv);
+  } catch {
+    status.textContent = 'Not a valid WAV file';
+    return;
+  }
+
+  fileName = file.name.replace(/\.wav$/i, '') + '.mp3';
+
+  const channels = header.channels;
+  const sampleRate = header.sampleRate;
+  const kbps = 128;
+  const totalSamples = header.dataLen / 2;
+  const allSamples = new Int16Array(arrayBuffer, header.dataOffset, totalSamples);
+
+  status.textContent = `Encoding ${channels}ch ${sampleRate}Hz...`;
+  progress.style.display = 'block';
+  progressBar.style.width = '0%';
+
+  // Use setTimeout to let UI update before blocking encode
+  await new Promise(r => setTimeout(r, 20));
+
+  const encoder = new Mp3Encoder(channels, sampleRate, kbps);
+  const chunks = [];
+  const blockSize = 1152;
+  const t0 = performance.now();
+
+  if (channels === 1) {
+    const total = allSamples.length;
+    for (let i = 0; i < total; i += blockSize) {
+      const chunk = allSamples.subarray(i, Math.min(i + blockSize, total));
+      const mp3buf = encoder.encodeBuffer(chunk);
+      if (mp3buf.length > 0) {
+        chunks.push(new Uint8Array(mp3buf.buffer.slice(mp3buf.byteOffset, mp3buf.byteOffset + mp3buf.byteLength)));
+      }
+      if (i % (blockSize * 50) === 0) {
+        progressBar.style.width = ((i / total) * 100) + '%';
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+  } else {
+    const numFrames = (totalSamples / channels) | 0;
+    const left = new Int16Array(numFrames);
+    const right = new Int16Array(numFrames);
+    for (let i = 0; i < numFrames; i++) {
+      left[i] = allSamples[i * channels];
+      right[i] = allSamples[i * channels + 1];
+    }
+    for (let i = 0; i < numFrames; i += blockSize) {
+      const l = left.subarray(i, Math.min(i + blockSize, numFrames));
+      const r = right.subarray(i, Math.min(i + blockSize, numFrames));
+      const mp3buf = encoder.encodeBuffer(l, r);
+      if (mp3buf.length > 0) {
+        chunks.push(new Uint8Array(mp3buf.buffer.slice(mp3buf.byteOffset, mp3buf.byteOffset + mp3buf.byteLength)));
+      }
+      if (i % (blockSize * 50) === 0) {
+        progressBar.style.width = ((i / numFrames) * 100) + '%';
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
+  }
+
+  const flush = encoder.flush();
+  if (flush.length > 0) {
+    chunks.push(new Uint8Array(flush.buffer.slice(flush.byteOffset, flush.byteOffset + flush.byteLength)));
+  }
+
+  progressBar.style.width = '100%';
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+
+  mp3Blob = new Blob(chunks, { type: 'audio/mpeg' });
+  const wavKb = (file.size / 1024).toFixed(0);
+  const mp3Kb = (mp3Blob.size / 1024).toFixed(0);
+
+  player.src = URL.createObjectURL(mp3Blob);
+  result.classList.add('visible');
+  status.textContent = `${wavKb} KB WAV → ${mp3Kb} KB MP3 in ${elapsed}s`;
+
+  setTimeout(() => { progress.style.display = 'none'; }, 500);
+}
+</script>
+</body>
+</html>

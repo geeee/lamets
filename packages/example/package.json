@@ -1,0 +1,16 @@
+{
+  "name": "lamets-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "lamets": "workspace:*",
+    "lamets-recorder": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lamets - Record to MP3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #111; color: #eee; }
+  .container { text-align: center; max-width: 300px; }
+  h1 { font-size: 1.2rem; margin-bottom: 1.5rem; font-weight: 400; color: #888; }
+  #recordBtn { width: 120px; height: 120px; border-radius: 50%; border: 3px solid #444; background: #222; color: #eee; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; }
+  #recordBtn:hover { border-color: #666; background: #2a2a2a; }
+  #recordBtn.recording { border-color: #e33; background: #2a1515; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(220,40,40,0.3); } 50% { box-shadow: 0 0 0 15px rgba(220,40,40,0); } }
+  #timer { margin-top: 0.75rem; font-size: 1.6rem; font-variant-numeric: tabular-nums; color: #eee; height: 1.8em; visibility: hidden; }
+  #timer.visible { visibility: visible; }
+  #meter { margin-top: 0.75rem; height: 4px; background: #222; border-radius: 2px; overflow: hidden; visibility: hidden; }
+  #meter.visible { visibility: visible; }
+  #meterBar { height: 100%; width: 0; background: #4f4; border-radius: 2px; transition: width 0.05s, background 0.3s; }
+  #status { margin-top: 0.75rem; font-size: 0.85rem; color: #666; min-height: 1.2em; }
+  #controls { margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: center; visibility: hidden; }
+  #controls.visible { visibility: visible; }
+  #controls button { padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; cursor: pointer; font-size: 0.85rem; min-width: 4.5rem; }
+  #controls button:hover { background: #333; border-color: #666; }
+  audio { display: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>lamets MP3 recorder</h1>
+  <button id="recordBtn">Record</button>
+  <div id="timer"></div>
+  <div id="meter"><div id="meterBar"></div></div>
+  <div id="status"></div>
+  <div id="controls">
+    <button id="playBtn">Play</button>
+    <button id="downloadBtn">Download .mp3</button>
+  </div>
+  <audio id="player"></audio>
+</div>
+
+<script type="module">
+import { Recorder } from 'lamets-recorder';
+
+const recordBtn = document.getElementById('recordBtn');
+const playBtn = document.getElementById('playBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const controls = document.getElementById('controls');
+const player = document.getElementById('player');
+const status = document.getElementById('status');
+const timerEl = document.getElementById('timer');
+const meterBar = document.getElementById('meterBar');
+const meter = document.getElementById('meter');
+
+let mp3Blob = null;
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+const recorder = new Recorder({
+  kbps: 128,
+  onLevel(rms) {
+    const db = 20 * Math.log10(Math.max(rms, 1e-10));
+    const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+    meterBar.style.width = pct + '%';
+    meterBar.style.background = pct > 85 ? '#f44' : pct > 50 ? '#fc3' : '#4f4';
+  },
+  onTime(seconds) {
+    timerEl.textContent = formatTime(seconds);
+  },
+});
+
+recordBtn.addEventListener('click', async () => {
+  if (!recorder.recording) {
+    try {
+      await recorder.start();
+    } catch {
+      status.textContent = 'Microphone access denied';
+      return;
+    }
+    recordBtn.textContent = 'Stop';
+    recordBtn.classList.add('recording');
+    timerEl.classList.add('visible');
+    meter.classList.add('visible');
+    controls.classList.remove('visible');
+    player.classList.remove('visible');
+    status.textContent = '';
+  } else {
+    mp3Blob = recorder.stop();
+    recordBtn.textContent = 'Record';
+    recordBtn.classList.remove('recording');
+    meter.classList.remove('visible');
+    meterBar.style.width = '0';
+
+    player.src = URL.createObjectURL(mp3Blob);
+    controls.classList.add('visible');
+
+    const kb = (mp3Blob.size / 1024).toFixed(1);
+    status.textContent = `${timerEl.textContent} — ${kb} KB`;
+  }
+});
+
+playBtn.addEventListener('click', () => {
+  if (player.paused) { player.play(); playBtn.textContent = 'Stop'; }
+  else { player.pause(); player.currentTime = 0; playBtn.textContent = 'Play'; }
+});
+player.addEventListener('ended', () => { playBtn.textContent = 'Play'; });
+
+downloadBtn.addEventListener('click', () => {
+  if (!mp3Blob) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(mp3Blob);
+  a.download = 'recording-lamets.mp3';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+</script>
+</body>
+</html>
